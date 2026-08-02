@@ -34,6 +34,12 @@ if exist lib (
     )
 )
 
+glslc .\assets\shader.glsl.frag -o .\assets\shader.spv.frag
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+glslc .\assets\shader.glsl.vert -o .\assets\shader.spv.vert
+if %errorlevel% neq 0 exit /b %errorlevel%x
+
 if /I "%CONFIG%"=="debug" (
     odin build ./src -debug -out:bin/program_d.exe
     if errorlevel 1 exit /b %errorlevel%
