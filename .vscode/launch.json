@@ -1,0 +1,16 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "cppvsdbg",
+            "request": "launch",
+            "console": "integratedTerminal",
+            "internalConsoleOptions": "openOnSessionStart",
+            "preLaunchTask": "Build - Debug",
+            "name": "Debug",
+            "program": "${workspaceFolder}/bin/program_d.exe",
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}

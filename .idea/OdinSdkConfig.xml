@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="com.lasagnerd.odin.settings.OdinSdkConfigPersistentState">
+    <option name="toolchainId" value="82b96c49-cb22-4bba-9f52-9ca5ff8fddaf" />
+    <option name="semanticAnnotatorEnabled" value="true" />
+    <option name="odinCheckerEnabled" value="true" />
+    <option name="highlightUnknownReferencesEnabled" value="false" />
+    <option name="conditionalSymbolResolutionEnabled" value="false" />
+    <option name="cacheEnabled" value="false" />
+    <option name="useBuiltinFormatter" value="false" />
+  </component>
+</project>
