@@ -5,11 +5,13 @@ import "core:log"
 import "core:mem"
 import "core:math/linalg"
 import sdl "vendor:sdl3"
+import sdli "vendor:sdl3/image"
 
 default_context: runtime.Context
 
 frag_shader_code := #load("..\\assets\\shader.spv.frag")
 vert_shader_code := #load("..\\assets\\shader.spv.vert")
+coblestone_image_pixels := #load("..\\assets\\textures\\cobblestone_1.png")
 
 main :: proc() {
     context.logger = log.create_console_logger()
@@ -22,28 +24,43 @@ main :: proc() {
     }, nil)
 
     ok := sdl.Init({.VIDEO}); assert(ok)
-    
+
     window := sdl.CreateWindow("Darkrit", 1280, 720, {}); assert(window != nil)
     
     gpu := sdl.CreateGPUDevice({.SPIRV}, true, nil)
 
     ok = sdl.ClaimWindowForGPUDevice(gpu, window); assert(ok)
 
-    vert_shader := load_shader(gpu, vert_shader_code, .VERTEX, 1)
-    fragment_shader := load_shader(gpu, frag_shader_code, .FRAGMENT, 0)
+    vert_shader := load_shader(gpu, vert_shader_code, .VERTEX, num_uniform_buffers = 1, num_samplers = 0)
+    fragment_shader := load_shader(gpu, frag_shader_code, .FRAGMENT, num_uniform_buffers = 0, num_samplers = 1)
+
+    img := load_image_rw(coblestone_image_pixels); assert(img != nil)
+    texture := sdl.CreateGPUTexture(gpu, {
+        format = .R8G8B8A8_UNORM,
+        usage = {.SAMPLER},
+        width = u32(img.w),
+        height = u32(img.h),
+        layer_count_or_depth = 1,
+        num_levels = 1,
+    })
+    pixels_byte_size := img.w * img.h * 4
+
+    // assign texture coordinates to vertices
+    // create a sampler for the shader
+    // make shader sample colors from texture
 
     Vec3 :: [3]f32
     VertexData :: struct {
         pos: Vec3,
         color: sdl.FColor,
-
+        uv: [2]f32,
     }
 
     vertices := []VertexData {
-        { pos = {-0.5,  0.5, 0}, color = {1,0,0,1} }, // tl
-        { pos = { 0.5,  0.5, 0}, color = {0,1,0,1} }, // tr
-        { pos = {-0.5, -0.5, 0}, color = {0,0,1,1} }, // bl
-        { pos = { 0.5, -0.5, 0}, color = {0,0,1,1} }, // br
+        { pos = {-0.5,  0.5, 0}, color = {1,0,0,1}, uv = {0,0} }, // tl
+        { pos = { 0.5,  0.5, 0}, color = {0,1,0,1}, uv = {1,0} }, // tr
+        { pos = {-0.5, -0.5, 0}, color = {0,0,1,1}, uv = {0,1} }, // bl
+        { pos = { 0.5, -0.5, 0}, color = {0,0,1,1}, uv = {1,1} }, // br
     }
     vertices_byte_size := len(vertices) * size_of(VertexData)
 
@@ -70,6 +87,14 @@ main :: proc() {
     mem.copy(transfer_mem[vertices_byte_size:], raw_data(indices), indices_byte_size)
     sdl.UnmapGPUTransferBuffer(gpu, transfer_buff)
 
+    tex_transfer_buff := sdl.CreateGPUTransferBuffer(gpu, {
+        usage = .UPLOAD,
+        size = u32(pixels_byte_size),
+    })
+    tex_transfer_mem := cast([^]byte)sdl.MapGPUTransferBuffer(gpu, tex_transfer_buff, false)
+    mem.copy(tex_transfer_mem, img.pixels, int(pixels_byte_size))
+    sdl.UnmapGPUTransferBuffer(gpu, tex_transfer_buff)
+
     copy_cmd_buf := sdl.AcquireGPUCommandBuffer(gpu)
     copy_pass := sdl.BeginGPUCopyPass(copy_cmd_buf)
 
@@ -85,12 +110,18 @@ main :: proc() {
         false,
     )
 
+    sdl.UploadToGPUTexture(copy_pass,
+        {transfer_buffer = tex_transfer_buff},
+        {texture = texture, w = u32(img.w), h = u32(img.h), d = 1},
+        false,
+    )
+
     sdl.EndGPUCopyPass(copy_pass)
     ok = sdl.SubmitGPUCommandBuffer(copy_cmd_buf); assert(ok)
     sdl.ReleaseGPUTransferBuffer(gpu, transfer_buff)
+    sdl.ReleaseGPUTransferBuffer(gpu, tex_transfer_buff)
 
-    // Upoad vertex data to the vertex buffer
-    // - Invoke upload commands
+    sampler := sdl.CreateGPUSampler(gpu, {})
 
     vertex_attrs := []sdl.GPUVertexAttribute {
         {
@@ -102,6 +133,11 @@ main :: proc() {
             location = 1,
             format = .FLOAT4,
             offset = u32(offset_of(VertexData, color)),
+        },
+        {
+            location = 2,
+            format = .FLOAT2,
+            offset = u32(offset_of(VertexData, uv)),
         },
     }
 
@@ -172,7 +208,7 @@ main :: proc() {
         ok = sdl.WaitAndAcquireGPUSwapchainTexture(cmd_buf, window, &swapchain_texture, nil, nil); assert(ok)
        
         rotation += ROTATION_SPEED * delta_time
-        model_mat := linalg.matrix4_translate_f32({0,0, -5}) * linalg.matrix4_rotate_f32(rotation, {0, 1, 0})
+        model_mat := linalg.matrix4_translate_f32({0,0, -1}) * linalg.matrix4_rotate_f32(rotation, {0, 1, 0})
 
         ubo := UBO { mvp = proj_mat * model_mat }
 
@@ -189,6 +225,7 @@ main :: proc() {
             sdl.BindGPUVertexBuffers(render_pass, 0, &(sdl.GPUBufferBinding { buffer = vertex_buf }), 1)
             sdl.BindGPUIndexBuffer(render_pass, {buffer = index_buf}, ._16BIT)
             sdl.PushGPUVertexUniformData(cmd_buf, 0, &ubo, size_of(ubo))
+            sdl.BindGPUFragmentSamplers(render_pass, 0, &(sdl.GPUTextureSamplerBinding { texture = texture, sampler = sampler }), 1)
             sdl.DrawGPUPrimitives(render_pass, 3, 1, 0, 0)
             sdl.DrawGPUIndexedPrimitives(render_pass, 6, 1, 0, 0, 0)
             sdl.EndGPURenderPass(render_pass)
@@ -198,7 +235,7 @@ main :: proc() {
     }
 }
 
-load_shader :: proc(device: ^sdl.GPUDevice, code: []u8, stage: sdl.GPUShaderStage, num_uniform_buffers: u32) -> ^sdl.GPUShader {
+load_shader :: proc(device: ^sdl.GPUDevice, code: []u8, stage: sdl.GPUShaderStage, num_uniform_buffers: u32, num_samplers: u32) -> ^sdl.GPUShader {
     return sdl.CreateGPUShader(device, {
         code_size = len(code),
         code = raw_data(code),
@@ -206,5 +243,14 @@ load_shader :: proc(device: ^sdl.GPUDevice, code: []u8, stage: sdl.GPUShaderStag
         format = {.SPIRV},
         stage = stage,
         num_uniform_buffers = num_uniform_buffers,
+        num_samplers = num_samplers,
     })
+}
+
+load_image_rw :: proc(image_data: []u8) -> ^sdl.Surface {
+    io := sdl.IOFromConstMem(raw_data(image_data), len(image_data))
+    img := sdli.Load_IO(io, true)
+    assert(img != nil)
+
+    return img
 }
