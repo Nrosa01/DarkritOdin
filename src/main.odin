@@ -12,6 +12,7 @@ default_context: runtime.Context
 frag_shader_code := #load("..\\assets\\shader.spv.frag")
 vert_shader_code := #load("..\\assets\\shader.spv.vert")
 coblestone_image_pixels := #load("..\\assets\\textures\\cobblestone_1.png")
+colormap_image_pixels := #load("..\\assets\\textures\\colormap.png")
 
 Vec3 :: [3]f32
 Vec2 :: [2]f32
@@ -37,7 +38,7 @@ main :: proc() {
     vert_shader := load_shader(gpu, vert_shader_code, .VERTEX, num_uniform_buffers = 1, num_samplers = 0)
     fragment_shader := load_shader(gpu, frag_shader_code, .FRAGMENT, num_uniform_buffers = 0, num_samplers = 1)
 
-    img := load_image_rw(coblestone_image_pixels); assert(img != nil)
+    img := load_image_rw(colormap_image_pixels); assert(img != nil)
     texture := sdl.CreateGPUTexture(gpu, {
         format = .R8G8B8A8_UNORM,
         usage = {.SAMPLER},
@@ -47,6 +48,20 @@ main :: proc() {
         num_levels = 1,
     })
     pixels_byte_size := img.w * img.h * 4
+
+    win_size: [2]i32
+    ok = sdl.GetWindowSize(window, &win_size.x, &win_size.y); assert(ok)
+
+    DEPTH_TEXTURE_FORMAT :: sdl.GPUTextureFormat.D24_UNORM
+
+    depth_texture := sdl.CreateGPUTexture(gpu, {
+        format = DEPTH_TEXTURE_FORMAT,
+        usage = {.DEPTH_STENCIL_TARGET},
+        width = u32(win_size.x),
+        height = u32(win_size.y),
+        layer_count_or_depth = 1,
+        num_levels = 1,
+    })
 
     // assign texture coordinates to vertices
     // create a sampler for the shader
@@ -66,10 +81,11 @@ main :: proc() {
     indices := make([dynamic]u16, len(obj_data.faces))
 
     for face, i in obj_data.faces {
+        uv := obj_data.uvs[face.uv]
         vertices[i] = {
             pos = obj_data.positions[face.pos],
             color = WHITE,
-            uv = obj_data.uvs[face.uv],
+            uv = {uv.x, 1 -uv.y},
         }
         indices[i] = u16(i)
     }
@@ -171,19 +187,23 @@ main :: proc() {
             num_vertex_attributes = u32(len(vertex_attrs)),
             vertex_attributes = raw_data(vertex_attrs),
         },
+        depth_stencil_state = {
+            enable_depth_test = true,
+            enable_depth_write = true,
+            compare_op = .LESS,
+        },
         target_info = {
             num_color_targets = 1,
             color_target_descriptions = &(sdl.GPUColorTargetDescription {
                 format = sdl.GetGPUSwapchainTextureFormat(gpu, window),
             }),
+            has_depth_stencil_target = true,
+            depth_stencil_format = DEPTH_TEXTURE_FORMAT
         },
     })
 
     sdl.ReleaseGPUShader(gpu, vert_shader)
     sdl.ReleaseGPUShader(gpu, fragment_shader)
-
-    win_size: [2]i32
-    ok = sdl.GetWindowSize(window, &win_size.x, &win_size.y); assert(ok)
 
     ROTATION_SPEED := linalg.to_radians(f32(90))
     rotation := f32(0)
@@ -237,7 +257,13 @@ main :: proc() {
                 clear_color = {0, 0.2, 0.4, 1},
                 store_op = .STORE,
             }
-            render_pass := sdl.BeginGPURenderPass(cmd_buf, &color_target, 1, nil)
+            depth_target_info := sdl.GPUDepthStencilTargetInfo {
+                texture = depth_texture,
+                load_op = .CLEAR,
+                clear_depth = 1, // Matches far plane clipping
+                store_op = .DONT_CARE,
+            }
+            render_pass := sdl.BeginGPURenderPass(cmd_buf, &color_target, 1, &depth_target_info)
             sdl.BindGPUGraphicsPipeline(render_pass, pipeline)
             sdl.BindGPUVertexBuffers(render_pass, 0, &(sdl.GPUBufferBinding { buffer = vertex_buf }), 1)
             sdl.BindGPUIndexBuffer(render_pass, {buffer = index_buf}, ._16BIT)
@@ -268,6 +294,12 @@ load_image_rw :: proc(image_data: []u8) -> ^sdl.Surface {
     io := sdl.IOFromConstMem(raw_data(image_data), len(image_data))
     img := sdli.Load_IO(io, true)
     assert(img != nil)
+
+    if img.format != .ABGR8888 {
+        next := sdl.ConvertSurface(img, .ABGR8888)
+        sdl.DestroySurface(img)
+        img = next
+    }
 
     return img
 }
