@@ -13,6 +13,9 @@ frag_shader_code := #load("..\\assets\\shader.spv.frag")
 vert_shader_code := #load("..\\assets\\shader.spv.vert")
 coblestone_image_pixels := #load("..\\assets\\textures\\cobblestone_1.png")
 
+Vec3 :: [3]f32
+Vec2 :: [2]f32
+
 main :: proc() {
     context.logger = log.create_console_logger()
     default_context = context
@@ -49,22 +52,33 @@ main :: proc() {
     // create a sampler for the shader
     // make shader sample colors from texture
 
-    Vec3 :: [3]f32
     VertexData :: struct {
         pos: Vec3,
         color: sdl.FColor,
         uv: [2]f32,
     }
 
-    vertices := []VertexData {
-        { pos = {-0.5,  0.5, 0}, color = {1,0,0,1}, uv = {0,0} }, // tl
-        { pos = { 0.5,  0.5, 0}, color = {0,1,0,1}, uv = {1,0} }, // tr
-        { pos = {-0.5, -0.5, 0}, color = {0,0,1,1}, uv = {0,1} }, // bl
-        { pos = { 0.5, -0.5, 0}, color = {0,0,1,1}, uv = {1,1} }, // br
-    }
-    vertices_byte_size := len(vertices) * size_of(VertexData)
+    WHITE :: sdl.FColor {1,1,1,1}
 
-    indices := []u16 {0, 1, 2, 2, 1, 3}
+    obj_data := obj_load("assets\\models\\sedan-sports.obj")
+
+    vertices := make([dynamic]VertexData, len(obj_data.faces))
+    indices := make([dynamic]u16, len(obj_data.faces))
+
+    for face, i in obj_data.faces {
+        vertices[i] = {
+            pos = obj_data.positions[face.pos],
+            color = WHITE,
+            uv = obj_data.uvs[face.uv],
+        }
+        indices[i] = u16(i)
+    }
+
+    obj_destroy(&obj_data)
+
+    num_indices := len(indices)
+
+    vertices_byte_size := len(vertices) * size_of(VertexData)
     indices_byte_size := len(indices) * size_of(indices[0])
 
     vertex_buf := sdl.CreateGPUBuffer(gpu, {
@@ -81,6 +95,9 @@ main :: proc() {
         usage = .UPLOAD,
         size = u32(vertices_byte_size + indices_byte_size),
     })
+
+    delete(indices)
+    delete(vertices)
 
     transfer_mem := cast([^]byte)sdl.MapGPUTransferBuffer(gpu, transfer_buff, false)
     mem.copy(transfer_mem, raw_data(vertices), vertices_byte_size)
@@ -208,7 +225,7 @@ main :: proc() {
         ok = sdl.WaitAndAcquireGPUSwapchainTexture(cmd_buf, window, &swapchain_texture, nil, nil); assert(ok)
        
         rotation += ROTATION_SPEED * delta_time
-        model_mat := linalg.matrix4_translate_f32({0,0, -1}) * linalg.matrix4_rotate_f32(rotation, {0, 1, 0})
+        model_mat := linalg.matrix4_translate_f32({0, -0.5, -2}) * linalg.matrix4_rotate_f32(rotation, {0, 1, 0})
 
         ubo := UBO { mvp = proj_mat * model_mat }
 
@@ -227,7 +244,7 @@ main :: proc() {
             sdl.PushGPUVertexUniformData(cmd_buf, 0, &ubo, size_of(ubo))
             sdl.BindGPUFragmentSamplers(render_pass, 0, &(sdl.GPUTextureSamplerBinding { texture = texture, sampler = sampler }), 1)
             sdl.DrawGPUPrimitives(render_pass, 3, 1, 0, 0)
-            sdl.DrawGPUIndexedPrimitives(render_pass, 6, 1, 0, 0, 0)
+            sdl.DrawGPUIndexedPrimitives(render_pass, u32(num_indices), 1, 0, 0, 0)
             sdl.EndGPURenderPass(render_pass)
         }
         
