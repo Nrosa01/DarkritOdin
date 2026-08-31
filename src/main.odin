@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:log"
 import "core:mem"
 import "core:math/linalg"
+import "core:math"
 import sdl "vendor:sdl3"
 import sdli "vendor:sdl3/image"
 
@@ -25,6 +26,21 @@ pipeline: ^sdl.GPUGraphicsPipeline
 win_size: [2]i32
 depth_texture: ^sdl.GPUTexture
 sampler: ^sdl.GPUSampler
+camera: struct {
+    position: Vec3,
+    target: Vec3,
+}
+
+look: struct {
+    yaw: f32,
+    pitch: f32,
+}
+key_down : #sparse[sdl.Scancode]bool
+mouse_move : Vec2
+
+EYE_HEIGHT :: 1
+MOVE_SPEED :: 3
+LOOK_SENSITIVY :: 0.3
 
 VertexData :: struct {
     pos: Vec3,
@@ -64,6 +80,13 @@ init :: proc() {
         layer_count_or_depth = 1,
         num_levels = 1,
     })
+
+    camera = {
+        position = { 0, EYE_HEIGHT, 3 },
+        target = { 0, EYE_HEIGHT, 0 }
+    }
+
+    _ = sdl.SetWindowRelativeMouseMode(window, true)
 }
 
 setup_pipeline :: proc() {
@@ -105,6 +128,9 @@ setup_pipeline :: proc() {
             enable_depth_test = true,
             enable_depth_write = true,
             compare_op = .LESS,
+        },
+        rasterizer_state = {
+            cull_mode = .BACK,
         },
         target_info = {
             num_color_targets = 1,
@@ -225,6 +251,37 @@ load_model :: proc(mesh_file: string, texture_file: []u8) -> Model {
     }
 }
 
+update_camera :: proc(delta: f32) {
+    move_input : Vec3
+    
+    if key_down[.W] do move_input.y = 1
+    else if key_down[.S] do move_input.y = -1
+
+    if key_down[.A] do move_input.x = -1
+    else if key_down[.D] do move_input.x = 1
+
+    if      key_down[.E] do move_input.z =  1
+    else if key_down[.Q] do move_input.z = -1
+
+    look_input := mouse_move * LOOK_SENSITIVY
+    look.yaw = math.wrap(look.yaw - look_input.x, 360)
+    look.pitch = math.clamp(look.pitch - look_input.y, -89, 89)
+
+    look_matrix := linalg.matrix3_from_yaw_pitch_roll_f32(linalg.to_radians(look.yaw), linalg.to_radians(look.pitch), 0)
+
+    forward  := look_matrix * Vec3 {0, 0, -1}
+    right    := look_matrix * Vec3 {1, 0, 0}
+    up       := look_matrix * Vec3{0,  1,  0}
+    move_direction := forward * move_input.y + right * move_input.x + up * move_input.z
+
+    move_speed_multiplier := Vec3 {1,1,1}
+    if key_down[.LSHIFT] do move_speed_multiplier *= 3
+    motion := linalg.normalize0(move_direction) * MOVE_SPEED * move_speed_multiplier * delta
+
+    camera.position += motion
+    camera.target = camera.position + forward
+}
+
 main :: proc() {
     context.logger = log.create_console_logger()
     default_context = context
@@ -250,7 +307,8 @@ main :: proc() {
 
     main_loop : for {
         free_all(context.temp_allocator)
-        
+        mouse_move = {}
+
         new_ticks := sdl.GetTicks()
         delta_time := f32(new_ticks - last_ticks) / 1000
         last_ticks =new_ticks
@@ -263,20 +321,28 @@ main :: proc() {
                     break main_loop
                 case .KEY_DOWN:
                     if ev.key.scancode == .ESCAPE do break main_loop
+                    key_down[ev.key.scancode] = true
+                case .KEY_UP:
+                    key_down[ev.key.scancode] = false
+                case .MOUSE_MOTION:
+                    mouse_move += {ev.motion.xrel, ev.motion.yrel}
             }
         }
 
         // Update game state
         rotation += ROTATION_SPEED * delta_time
+        update_camera(delta_time)
 
         // Render
         cmd_buf := sdl.AcquireGPUCommandBuffer(gpu)
         swapchain_texture : ^sdl.GPUTexture
         ok := sdl.WaitAndAcquireGPUSwapchainTexture(cmd_buf, window, &swapchain_texture, nil, nil); assert(ok)
        
-        model_mat := linalg.matrix4_translate_f32({0, -0.5, -2}) * linalg.matrix4_rotate_f32(rotation, {0, 1, 0})
+        view_mat := linalg.matrix4_look_at_f32(camera.position, camera.target, {0,1,0})
 
-        ubo := UBO { mvp = proj_mat * model_mat }
+        model_mat := linalg.matrix4_translate_f32({0, 0, 0}) * linalg.matrix4_rotate_f32(rotation, {0, 1, 0})
+
+        ubo := UBO { mvp = proj_mat * view_mat * model_mat }
 
        if swapchain_texture != nil {
             // Begin render pass
