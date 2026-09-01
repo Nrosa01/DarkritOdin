@@ -34,10 +34,10 @@ if exist lib (
     )
 )
 
-glslc .\assets\shader.glsl.frag -o .\assets\shader.spv.frag
+shadercross .\assets\shaders\src\shader.hlsl.frag -o .\assets\shaders\out\shader.frag.spv
 if %errorlevel% neq 0 exit /b %errorlevel%
 
-glslc .\assets\shader.glsl.vert -o .\assets\shader.spv.vert
+shadercross .\assets\shaders\src\shader.hlsl.vert -o .\assets\shaders\out\shader.vert.spv
 if %errorlevel% neq 0 exit /b %errorlevel%x
 
 if /I "%CONFIG%"=="debug" (

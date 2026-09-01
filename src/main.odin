@@ -2,18 +2,18 @@
 
 import "base:runtime"
 import "core:log"
+import "core:os"
 import "core:mem"
+import "core:path/filepath"
 import "core:math/linalg"
 import "core:math"
+import "core:strings"
 import sdl "vendor:sdl3"
 import sdli "vendor:sdl3/image"
 
 default_context: runtime.Context
 
-frag_shader_code := #load("..\\assets\\shader.spv.frag")
-vert_shader_code := #load("..\\assets\\shader.spv.vert")
-coblestone_image_pixels := #load("..\\assets\\textures\\cobblestone_1.png")
-colormap_image_pixels := #load("..\\assets\\textures\\colormap.png")
+ASSET_DIR :: "assets"
 
 Vec3 :: [3]f32
 Vec2 :: [2]f32
@@ -90,8 +90,8 @@ init :: proc() {
 }
 
 setup_pipeline :: proc() {
-        vert_shader := load_shader(gpu, vert_shader_code, .VERTEX, num_uniform_buffers = 1, num_samplers = 0)
-    fragment_shader := load_shader(gpu, frag_shader_code, .FRAGMENT, num_uniform_buffers = 0, num_samplers = 1)
+    vert_shader := load_shader(gpu, "shader.vert", num_uniform_buffers = 1, num_samplers = 0)
+    fragment_shader := load_shader(gpu, "shader.frag", num_uniform_buffers = 0, num_samplers = 1)
     
     vertex_attrs := []sdl.GPUVertexAttribute {
         {
@@ -148,8 +148,12 @@ setup_pipeline :: proc() {
     sampler = sdl.CreateGPUSampler(gpu, {})
 }
 
-load_model :: proc(mesh_file: string, texture_file: []u8) -> Model {
-        img := load_image_rw(colormap_image_pixels); assert(img != nil)
+load_model :: proc(mesh_file: string, texture_file: string) -> Model {
+    mesh_path, err := filepath.join({ASSET_DIR, "meshes", mesh_file}, context.temp_allocator)
+    texture_path, err2 := filepath.join({ASSET_DIR, "textures", texture_file}, context.temp_allocator)
+    assert(err == nil)
+    assert(err2 == nil)
+    img := load_image_path(texture_path); assert(img != nil)
     texture := sdl.CreateGPUTexture(gpu, {
         format = .R8G8B8A8_UNORM,
         usage = {.SAMPLER},
@@ -164,7 +168,7 @@ load_model :: proc(mesh_file: string, texture_file: []u8) -> Model {
     // create a sampler for the shader
     // make shader sample colors from texture
 
-    obj_data := obj_load(mesh_file)
+    obj_data := obj_load(mesh_path)
 
     vertices := make([dynamic]VertexData, len(obj_data.faces))
     indices := make([dynamic]u16, len(obj_data.faces))
@@ -289,7 +293,7 @@ main :: proc() {
     init()
     setup_pipeline()
 
-    model := load_model("assets\\models\\sedan-sports.obj", colormap_image_pixels)
+    model := load_model("sedan-sports.obj", "colormap.png")
     ROTATION_SPEED := linalg.to_radians(f32(90))
     rotation := f32(0)
 
@@ -373,7 +377,21 @@ main :: proc() {
     }
 }
 
-load_shader :: proc(device: ^sdl.GPUDevice, code: []u8, stage: sdl.GPUShaderStage, num_uniform_buffers: u32, num_samplers: u32) -> ^sdl.GPUShader {
+load_shader :: proc(device: ^sdl.GPUDevice, shaderfile: string, num_uniform_buffers: u32, num_samplers: u32) -> ^sdl.GPUShader {
+    stage: sdl.GPUShaderStage
+
+    switch filepath.ext(shaderfile) {
+        case ".vert":
+            stage = .VERTEX
+        case ".frag":
+            stage = .FRAGMENT
+    }
+
+    shaderfile, err1 := filepath.join({ASSET_DIR, "shaders", "out", shaderfile})
+    assert(err1 == nil)
+    filename := strings.concatenate({shaderfile, ".spv"})
+    code, err := os.read_entire_file_from_path(filename, context.temp_allocator); assert(err == nil)
+
     return sdl.CreateGPUShader(device, {
         code_size = len(code),
         code = raw_data(code),
@@ -388,6 +406,21 @@ load_shader :: proc(device: ^sdl.GPUDevice, code: []u8, stage: sdl.GPUShaderStag
 load_image_rw :: proc(image_data: []u8) -> ^sdl.Surface {
     io := sdl.IOFromConstMem(raw_data(image_data), len(image_data))
     img := sdli.Load_IO(io, true)
+    assert(img != nil)
+
+    if img.format != .ABGR8888 {
+        next := sdl.ConvertSurface(img, .ABGR8888)
+        sdl.DestroySurface(img)
+        img = next
+    }
+
+    return img
+}
+
+load_image_path :: proc(path: string) -> ^sdl.Surface {
+    // image_data: []u8 = os.read_entire_file_from_path(path, context.temp_allocator)
+    // io := sdl.IOFromConstMem(raw_data(image_data), len(image_data))
+    img := sdli.Load(strings.clone_to_cstring(path, context.temp_allocator))
     assert(img != nil)
 
     if img.format != .ABGR8888 {
