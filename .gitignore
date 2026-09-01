@@ -3,3 +3,4 @@ out/**
 
 *.user
 assets/*spv.*
+assets/shaders/out/**
