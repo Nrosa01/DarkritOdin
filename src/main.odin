@@ -3,6 +3,7 @@
 import "base:runtime"
 import "core:log"
 import "core:os"
+import "core:encoding/json"
 import "core:mem"
 import "core:path/filepath"
 import "core:math/linalg"
@@ -97,8 +98,8 @@ init :: proc() {
 }
 
 setup_pipeline :: proc() {
-    vert_shader := load_shader(gpu, "shader.vert", num_uniform_buffers = 1, num_samplers = 0)
-    fragment_shader := load_shader(gpu, "shader.frag", num_uniform_buffers = 0, num_samplers = 1)
+    vert_shader := load_shader(gpu, "shader.vert")
+    fragment_shader := load_shader(gpu, "shader.frag")
     
     vertex_attrs := []sdl.GPUVertexAttribute {
         {
@@ -384,7 +385,7 @@ main :: proc() {
     }
 }
 
-load_shader :: proc(device: ^sdl.GPUDevice, shaderfile: string, num_uniform_buffers: u32, num_samplers: u32) -> ^sdl.GPUShader {
+load_shader :: proc(device: ^sdl.GPUDevice, shaderfile: string) -> ^sdl.GPUShader {
     stage: sdl.GPUShaderStage
 
     switch filepath.ext(shaderfile) {
@@ -424,15 +425,37 @@ load_shader :: proc(device: ^sdl.GPUDevice, shaderfile: string, num_uniform_buff
     filename := strings.concatenate({shaderfile, format_ext})
     code, err := os.read_entire_file_from_path(filename, context.temp_allocator); assert(err == nil)
 
+    info := load_shader_info(shaderfile)
+
     return sdl.CreateGPUShader(device, {
         code_size = len(code),
         code = raw_data(code),
         entrypoint = entrypoint,
         format = {format},
         stage = stage,
-        num_uniform_buffers = num_uniform_buffers,
-        num_samplers = num_samplers,
+        num_uniform_buffers = info.uniform_buffers,
+        num_samplers = info.samplers,
+        num_storage_buffers = info.storage_buffers,
+        num_storage_textures = info.storage_textures,
     })
+}
+
+Shader_Info :: struct {
+    samplers: u32,
+    storage_textures: u32,
+    storage_buffers: u32,
+    uniform_buffers: u32,
+}
+
+load_shader_info :: proc(shaderfile: string) -> Shader_Info {
+    filename := strings.concatenate({shaderfile, ".json"}, context.temp_allocator)
+    json_data, ok := os.read_entire_file_from_path(filename, context.temp_allocator)
+    result: Shader_Info
+
+    err := json.unmarshal(json_data, &result, .JSON, context.temp_allocator)
+    assert(err == nil)
+
+    return result
 }
 
 load_image_rw :: proc(image_data: []u8) -> ^sdl.Surface {

@@ -6,6 +6,8 @@ import "core:strings"
 import "core:slice"
 import "core:os"
 
+LOG :: false
+
 main :: proc() {
 	context.logger = log.create_console_logger()
 
@@ -100,8 +102,9 @@ shadercross :: proc(file: os.File_Info, format: string) {
 run_str :: proc(cmd: string) { run(strings.split(cmd, " ", context.temp_allocator)) }
 
 run :: proc(cmd: []string) {
-	log.infof("Running {}", cmd)
-	code, err := exec(cmd)
+	when LOG do log.infof("Running {}", cmd)
+	
+    code, err := exec(cmd)
 	if err != nil {
 		log.errorf("Error executing process {}", err)
 		os.exit(1)
